@@ -94,19 +94,39 @@ crontab -e
 */10 * * * * cd $HOME/PGM/ai-news-push && $HOME/.bun/bin/bun run src/codex-resets.ts >> /tmp/codex-resets.log 2>&1
 ```
 
-**方案 B：外部定时器打 `workflow_dispatch`**
+**方案 B：外部定时器打 `workflow_dispatch`（当前采用）**
 
-workflow 已经声明了 `workflow_dispatch`，外部只需一个 POST（fine-grained PAT，权限 `Actions: write`）：
+`scripts/dispatch.sh` 就是干这个的：读 token → POST `dispatches` → 把 HTTP 状态写日志；成功是 `204`。
+
+一次性配置（已在本机配好，重装机器时照做）：
 
 ```bash
-curl -X POST \
-  -H "Authorization: Bearer $GH_PAT" \
-  -H "Accept: application/vnd.github+json" \
-  https://api.github.com/repos/lirc571/ai-news-push/actions/workflows/codex-resets.yml/dispatches \
-  -d '{"ref":"main"}'
+# 1. fine-grained PAT，权限只需 Actions: Read and write，且只勾这一个仓库
+mkdir -p ~/.config/ai-news-push && chmod 700 ~/.config/ai-news-push
+printf '%s' 'github_pat_xxx' > ~/.config/ai-news-push/gh_pat
+chmod 600 ~/.config/ai-news-push/gh_pat
+
+# 2. 先手动验证一次（应输出 OK 204）
+~/PGM/ai-news-push/scripts/dispatch.sh
+
+# 3. 每 10 分钟触发一次，错开整点
+crontab -e
+5,15,25,35,45,55 * * * * /home/lirc572/PGM/ai-news-push/scripts/dispatch.sh
 ```
 
-放到 cron-job.org / Cloudflare Worker Cron Trigger（`*/10 * * * *`）/ 任意常开机器即可；这里准点，而 GitHub 自己的 cron 只当兜底。
+查看情况：
+
+```bash
+tail -f ~/.cache/ai-news-push/dispatch.log     # 每次触发的 HTTP 状态
+crontab -l                                     # 确认条目在
+curl -s 'https://api.github.com/repos/lirc571/ai-news-push/actions/runs?per_page=5' \
+  | grep -E '"created_at"|"event"'
+```
+
+换仓库/工作流：`REPO=owner/name WORKFLOW=foo.yml scripts/dispatch.sh`。
+也可以把这个脚本丢到 cron-job.org / Cloudflare Worker Cron Trigger / 任何常开机器，效果一样。
+
+> token 泄露了就重新生成一个，覆盖 `~/.config/ai-news-push/gh_pat` 即可，无需改 crontab。
 
 ### 可调环境变量
 
