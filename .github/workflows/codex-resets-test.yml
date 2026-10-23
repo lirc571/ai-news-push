@@ -1,0 +1,81 @@
+name: Codex reset watcher · test
+
+# 只在手动触发；不写 state、不提交、不影响正式监控的去重状态
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "测什么"
+        type: choice
+        options:
+          - events # 拉 AIHOT 接口 + 推几条示例提醒
+          - ping # 只测 Telegram 链路
+        default: events
+      sample_size:
+        description: "events 模式最多发几条示例消息"
+        type: number
+        default: 2
+      dry_run:
+        description: "只把消息打印到日志，不真的发送"
+        type: boolean
+        default: false
+
+concurrency:
+  group: codex-reset-watcher-test
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Check secrets
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          missing=()
+          [[ -n "$TELEGRAM_BOT_TOKEN" ]] || missing+=(TELEGRAM_BOT_TOKEN)
+          [[ -n "$TELEGRAM_CHAT_ID" ]] || missing+=(TELEGRAM_CHAT_ID)
+          if ((${#missing[@]})); then
+            echo "::error::缺少 repository secret: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Self test
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TEST_SAMPLE_SIZE: ${{ inputs.sample_size }}
+        run: |
+          args=(--test)
+          if [[ "${{ inputs.mode }}" == "ping" ]]; then args=(--ping); fi
+          if [[ "${{ inputs.dry_run }}" == "true" ]]; then args+=(--dry-run); fi
+
+          echo "running: bun run src/codex-resets.ts ${args[*]}"
+          bun run src/codex-resets.ts "${args[@]}" 2>&1 | tee /tmp/selftest.log
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Codex reset watcher · self test"
+            echo
+            echo "- mode: \`${{ inputs.mode }}\`"
+            echo "- dry_run: \`${{ inputs.dry_run }}\`"
+            echo "- AIHOT: https://aihot.news/api/v1/codex-resets/recent"
+            echo
+            echo '```'
+            cat /tmp/selftest.log 2>/dev/null || echo "(no output captured)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

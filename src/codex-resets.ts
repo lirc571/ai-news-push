@@ -54,8 +54,17 @@ const BASELINE_MAX_AGE_HOURS = Number(process.env.BASELINE_MAX_AGE_HOURS ?? 72);
 /** 预告的预计窗口结束后多少小时内仍算“进行中” */
 const PENDING_GRACE_HOURS = Number(process.env.PENDING_GRACE_HOURS ?? 6);
 
+/** 只打印不发送、不写状态 */
 const DRY_RUN =
   process.argv.includes("--dry-run") || process.env.DRY_RUN === "1";
+/** 自检模式：拉取 + 发几条示例提醒，但不读写去重状态 */
+const TEST_MODE =
+  process.argv.includes("--test") || process.env.TEST_MODE === "1";
+/** 只发一条连通性测试消息，不访问 AIHOT */
+const PING_MODE =
+  process.argv.includes("--ping") || process.env.PING_MODE === "1";
+/** 自检最多发几条示例消息 */
+const TEST_SAMPLE_SIZE = Number(process.env.TEST_SAMPLE_SIZE ?? 2);
 
 const STATE_FILE =
   argValue("--state") ?? process.env.STATE_FILE ?? "state/codex-resets.json";
@@ -171,6 +180,22 @@ function classify(event: ResetEvent): Kind | null {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+/** 发送一条消息（dry-run 时只打印），返回是否成功 */
+async function deliver(text: string, label: string): Promise<boolean> {
+  if (DRY_RUN) {
+    log(`[dry-run] would send ${label}:\n---\n${text}\n---`);
+    return true;
+  }
+  try {
+    await sendTelegram(text);
+    log(`sent ${label}`);
+    return true;
+  } catch (err) {
+    console.error(`[codex-resets] send failed for ${label}: ${String(err)}`);
+    return false;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +420,105 @@ function isWorthNotifyingOnBaseline(
 }
 
 // ---------------------------------------------------------------------------
+// 自检（workflow_dispatch 测试用，不碰去重状态）
+// ---------------------------------------------------------------------------
+
+/** 挑选最值得展示的样本：优先最新的「预告」和最新的「已确认」各一条 */
+function pickSample(events: ResetEvent[], size: number): ResetEvent[] {
+  const byUpdatedDesc = [...events].sort(
+    (a, b) =>
+      (ts(b.updatedAt) || ts(b.createdAt) || 0) -
+      (ts(a.updatedAt) || ts(a.createdAt) || 0),
+  );
+  const picked: ResetEvent[] = [];
+  const push = (e: ResetEvent | undefined) => {
+    if (e && !picked.includes(e) && picked.length < size) picked.push(e);
+  };
+
+  push(byUpdatedDesc.find((e) => e.status === "announced"));
+  push(byUpdatedDesc.find((e) => e.status === "confirmed"));
+  for (const e of byUpdatedDesc) push(e);
+  return picked;
+}
+
+async function ping(): Promise<void> {
+  const text = [
+    "🧪 <b>测试消息</b>",
+    "来自 ai-news-push 的 Codex 重置监控，Telegram 链路正常。",
+    `时间：${formatBeijing(new Date().toISOString())}`,
+  ].join("\n");
+
+  const ok = await deliver(text, "ping");
+  if (!ok) {
+    process.exitCode = 1;
+    console.error("[codex-resets] ping failed");
+    return;
+  }
+  log("=== self test: PASS (telegram only) ===");
+}
+
+async function selfTest(): Promise<void> {
+  log("=== self test: start ===");
+  const result = await fetchResets(null);
+  if (result.notModified) {
+    throw new Error("unconditional request returned 304, unexpected");
+  }
+
+  const data = result.data;
+  const events = (Array.isArray(data.events) ? data.events : []).filter(
+    (e) => e?.id,
+  );
+  const announced = events.filter((e) => e.status === "announced");
+  const confirmed = events.filter((e) => e.status === "confirmed");
+
+  log(
+    `API OK: checkedAt=${data.checkedAt ?? "?"} count=${
+      data.count ?? events.length
+    } events=${events.length} announced=${announced.length} confirmed=${
+      confirmed.length
+    } monitor=${data.monitor?.status ?? "?"}`,
+  );
+
+  // 顺便验证条件请求（正式流程靠它省流量）
+  if (result.etag) {
+    const again = await fetchResets(result.etag);
+    log(
+      again.notModified
+        ? `conditional request: PASS (304 Not Modified, etag=${result.etag})`
+        : "conditional request: WARN (200 instead of 304, etag ignored or data changed mid-run)",
+    );
+  } else {
+    log("conditional request: SKIP (response has no ETag)");
+  }
+
+  const sample = pickSample(events, Math.max(1, TEST_SAMPLE_SIZE));
+  if (sample.length === 0) {
+    log("no events returned, nothing to render; telegram not exercised");
+    return;
+  }
+
+  let failures = 0;
+  for (const event of sample) {
+    const kind = classify(event) ?? "upcoming";
+    const text = [
+      "🧪 <b>测试提醒</b>（示例，未写入去重状态）",
+      "",
+      formatMessage(event, kind),
+    ].join("\n");
+    const ok = await deliver(text, `${event.id} (${event.status ?? "?"})`);
+    if (!ok) failures++;
+    await sleep(300);
+  }
+
+  if (failures > 0) {
+    process.exitCode = 1;
+    console.error(`=== self test: FAIL (${failures} message(s) not delivered) ===`);
+    return;
+  }
+  log(`=== self test: PASS (${sample.length} sample message(s)) ===`);
+}
+
+// ---------------------------------------------------------------------------
 // 主流程
 // ---------------------------------------------------------------------------
 
@@ -404,6 +528,9 @@ async function main(): Promise<void> {
       "TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID are required (or pass --dry-run)",
     );
   }
+
+  if (PING_MODE) return ping();
+  if (TEST_MODE) return selfTest();
 
   const state = await loadState();
   const result = await fetchResets(state.etag ?? null);
@@ -468,18 +595,14 @@ async function main(): Promise<void> {
 
   let failures = 0;
   for (const item of queue) {
-    const text = formatMessage(item.event, item.kind);
-    if (DRY_RUN) {
-      log(`[dry-run] would send ${item.key}:\n---\n${text}\n---`);
-      continue;
-    }
-    try {
-      await sendTelegram(text);
+    const ok = await deliver(
+      formatMessage(item.event, item.kind),
+      `${item.key} (${item.kind})`,
+    );
+    if (ok) {
       seen[item.key] = new Date(now).toISOString();
-      log(`sent ${item.key} (${item.kind})`);
-    } catch (err) {
+    } else {
       failures++;
-      console.error(`[codex-resets] send failed for ${item.key}: ${String(err)}`);
     }
     // 轻微间隔，避免触发 Telegram 限流
     await sleep(300);

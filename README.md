@@ -29,12 +29,38 @@ bun install
 # 只打印不发送（不会写状态文件）
 bun run src/codex-resets.ts --dry-run
 
+# 自检：拉接口 + 渲染示例提醒（不读写 state，--dry-run 时只打印）
+bun run src/codex-resets.ts --test --dry-run
+bun run src/codex-resets.ts --test
+
+# 只测 Telegram 链路
+bun run src/codex-resets.ts --ping
+
 # 用真实 token 跑一次（会写 state/codex-resets.json）
 TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=... bun run src/codex-resets.ts
 
 # 换一个状态文件跑，适合测试
 bun run src/codex-resets.ts --dry-run --state /tmp/state.json
 ```
+
+### 自检工作流（手动触发）
+
+`.github/workflows/codex-resets-test.yml` 只在 `workflow_dispatch` 触发，**不写 state、不提交 commit**，不会影响正式监控的去重记录。
+
+Actions → *Codex reset watcher · test* → Run workflow，参数：
+
+| 参数 | 取值 | 说明 |
+| --- | --- | --- |
+| `mode` | `events` / `ping` | `events`：拉 AIHOT 接口 + 推最多 N 条示例提醒；`ping`：只发一条连通性消息 |
+| `sample_size` | 数字，默认 `2` | `events` 模式发几条（优先挑最新的「预告」和最新的「已确认」各一条） |
+| `dry_run` | `true` / `false` | 只把消息打印到日志 / Job Summary，不真的发到 Telegram |
+
+`events` 模式会顺带做两项断言，失败直接让 job 变红：
+
+1. 接口能正常返回（打印 `checkedAt` / `count` / `announced` / `confirmed` / `monitor`）；
+2. 带 `If-None-Match` 再请求一次应得到 `304`（正式流程靠它省流量）。
+
+建议流程：先 `mode=events, dry_run=true` 看日志里的 API 指标和消息渲染，再 `mode=ping` 确认真能收到消息，最后才让定时任务上线。
 
 ### 行为说明
 
@@ -59,6 +85,7 @@ bun run src/codex-resets.ts --dry-run --state /tmp/state.json
 | `PENDING_GRACE_HOURS` | `6` | 预告窗口结束后多久内仍算“进行中” |
 | `STATE_FILE` | `state/codex-resets.json` | 状态文件路径 |
 | `CODEX_RESETS_URL` | `https://aihot.news/api/v1/codex-resets/recent` | 可指向全量 `/api/v1/codex-resets` |
+| `TEST_SAMPLE_SIZE` | `2` | 自检 `--test` 发几条示例 |
 
 ### 备用方案（不想让 bot 提交 commit）
 
@@ -80,6 +107,7 @@ bun run src/codex-resets.ts --dry-run --state /tmp/state.json
 ```bash
 bun install
 bun run src/codex-resets.ts --dry-run   # 试跑
+bun run src/codex-resets.ts --test      # 自检（拉接口 + 发示例）
 bunx tsc --noEmit                       # 类型检查
 ```
 
