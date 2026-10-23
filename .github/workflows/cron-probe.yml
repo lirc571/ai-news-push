@@ -3,7 +3,7 @@ name: cron probe
 # 临时诊断用：确认这个仓库的 schedule 事件到底会不会触发
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "17 3 * * *"   # 每天一次当探针：如果它开始跑，说明 GitHub 的 schedule 恢复了
   workflow_dispatch:
 
 permissions:

@@ -556,6 +556,8 @@ async function main(): Promise<void> {
   const queue: { key: string; event: ResetEvent; kind: Kind }[] = [];
   let skippedByConfig = 0;
   let skippedStale = 0;
+  // seen 是否真的变了；没变就不写文件，避免 etag 每次变化都产生一个空提交
+  let stateChanged = !state.initialized;
 
   for (const event of events) {
     if (!event?.id) continue;
@@ -567,11 +569,13 @@ async function main(): Promise<void> {
 
     if (!NOTIFY_KINDS.has(kind)) {
       seen[key] = new Date(now).toISOString();
+      stateChanged = true;
       skippedByConfig++;
       continue;
     }
     if (baseline && !isWorthNotifyingOnBaseline(event, kind, now)) {
       seen[key] = new Date(now).toISOString();
+      stateChanged = true;
       skippedStale++;
       continue;
     }
@@ -601,6 +605,7 @@ async function main(): Promise<void> {
     );
     if (ok) {
       seen[item.key] = new Date(now).toISOString();
+      stateChanged = true;
     } else {
       failures++;
     }
@@ -608,12 +613,16 @@ async function main(): Promise<void> {
     await sleep(300);
   }
 
-  // 有推送失败时保留旧 ETag，否则下次 304 就再也补发不了了
-  await saveState({
-    ...state,
-    etag: failures > 0 ? (state.etag ?? null) : result.etag,
-    seen,
-  });
+  if (!stateChanged) {
+    log("no new events, state untouched");
+  } else {
+    // 有推送失败时保留旧 ETag，否则下次 304 就再也补发不了了
+    await saveState({
+      ...state,
+      etag: failures > 0 ? (state.etag ?? null) : result.etag,
+      seen,
+    });
+  }
 
   if (failures > 0) {
     process.exitCode = 1;
