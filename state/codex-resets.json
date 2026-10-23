@@ -1,6 +1,11 @@
 {
   "version": 1,
-  "initialized": false,
-  "etag": null,
-  "seen": {}
+  "initialized": true,
+  "etag": "W/\"v1-codex-resets-recent-0bd74673750d1450\"",
+  "updatedAt": "2026-10-23T03:40:38.463Z",
+  "seen": {
+    "reset-2113162277688070445-1-1:announced": "2026-10-23T03:40:38.463Z",
+    "reset-2112432076767289678-1-1:confirmed": "2026-10-23T03:40:38.463Z",
+    "reset-2111492738025959922-1-1:confirmed": "2026-10-23T03:40:38.463Z"
+  }
 }
