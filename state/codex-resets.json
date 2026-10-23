@@ -1,9 +1,11 @@
 {
   "version": 1,
   "initialized": true,
-  "etag": "W/\"v1-codex-resets-recent-0bd74673750d1450\"",
-  "updatedAt": "2026-10-23T03:40:38.463Z",
+  "etag": "W/\"v1-codex-resets-recent-36ce7d20d5f80860\"",
+  "updatedAt": "2026-10-23T07:13:33.299Z",
   "seen": {
+    "reset-2113162277688070445-1-1:confirmed": "2026-10-23T07:13:31.883Z",
+    "reset-2113492502355562875-1-1:announced": "2026-10-23T07:13:31.883Z",
     "reset-2113162277688070445-1-1:announced": "2026-10-23T03:40:38.463Z",
     "reset-2112432076767289678-1-1:confirmed": "2026-10-23T03:40:38.463Z",
     "reset-2111492738025959922-1-1:confirmed": "2026-10-23T03:40:38.463Z"
