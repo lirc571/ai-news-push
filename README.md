@@ -74,6 +74,40 @@ Actions → *Codex reset watcher · test* → Run workflow，参数：
 - cron 是 UTC 且最小 5 分钟精度；GitHub 的定时任务可能延迟甚至偶发跳过，属正常现象。
   仓库 60 天无活动时 scheduled workflow 会被自动停用，注意保活。
 
+### 备用：GitHub 的 cron 不触发时的方案
+
+GitHub 的 `schedule` 是 best-effort（官方：高负载会延迟甚至丢弃），偶尔也会出现某个仓库的 scheduled workflow 长时间完全不触发（workflow `state: active`、文件合法、手动 dispatch 正常，但 runs 里根本没有 `schedule` 记录）。遇到这种情况不要硬等：
+
+**方案 A：本机 cron（零外部依赖）**
+
+Bun 会自动读取工作目录的 `.env`，所以把密钥放 `.env`（已在 `.gitignore` 里）：
+
+```bash
+cd ~/PGM/ai-news-push
+cat > .env <<'EOF'
+TELEGRAM_BOT_TOKEN=123456:AA...
+TELEGRAM_CHAT_ID=123456789
+EOF
+
+# 每 10 分钟跑一次；状态文件就在仓库里，和 Actions 完全兼容
+crontab -e
+*/10 * * * * cd $HOME/PGM/ai-news-push && $HOME/.bun/bin/bun run src/codex-resets.ts >> /tmp/codex-resets.log 2>&1
+```
+
+**方案 B：外部定时器打 `workflow_dispatch`**
+
+workflow 已经声明了 `workflow_dispatch`，外部只需一个 POST（fine-grained PAT，权限 `Actions: write`）：
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $GH_PAT" \
+  -H "Accept: application/vnd.github+json" \
+  https://api.github.com/repos/lirc571/ai-news-push/actions/workflows/codex-resets.yml/dispatches \
+  -d '{"ref":"main"}'
+```
+
+放到 cron-job.org / Cloudflare Worker Cron Trigger（`*/10 * * * *`）/ 任意常开机器即可；这里准点，而 GitHub 自己的 cron 只当兜底。
+
 ### 可调环境变量
 
 | 变量 | 默认值 | 说明 |
