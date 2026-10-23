@@ -1,0 +1,17 @@
+{
+  "name": "ai-news-push",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "typecheck": "bunx tsc --noEmit",
+    "codex-resets": "bun run src/codex-resets.ts",
+    "codex-resets:dry": "bun run src/codex-resets.ts --dry-run"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^7"
+  }
+}

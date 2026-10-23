@@ -1,0 +1,68 @@
+name: Codex reset watcher
+
+on:
+  schedule:
+    # GitHub 的 cron 是 UTC，最小 5 分钟精度；每小时 :03/:13/... 跑一次，避开整点拥堵
+    - cron: "3,13,23,33,43,53 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "只打印消息，不发送、不写状态"
+        type: boolean
+        default: false
+
+# 定时任务不并发：上一次没跑完就跳过本次
+concurrency:
+  group: codex-reset-watcher
+  cancel-in-progress: false
+
+permissions:
+  contents: write # 需要把去重状态（state/）提交回仓库
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Check secrets
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          missing=()
+          [[ -n "$TELEGRAM_BOT_TOKEN" ]] || missing+=(TELEGRAM_BOT_TOKEN)
+          [[ -n "$TELEGRAM_CHAT_ID" ]] || missing+=(TELEGRAM_CHAT_ID)
+          if ((${#missing[@]})); then
+            echo "::error::缺少 repository secret: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Check Codex resets
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          STATE_FILE: state/codex-resets.json
+          NOTIFY_KINDS: upcoming,landed
+        run: bun run src/codex-resets.ts ${{ inputs.dry_run && '--dry-run' || '' }}
+
+      - name: Persist state
+        if: ${{ !inputs.dry_run }}
+        run: |
+          if [[ -z "$(git status --porcelain state/)" ]]; then
+            echo "state 无变化，跳过提交"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add state/
+          git commit -m "chore(state): codex reset watcher state [skip ci]"
+          # 期间若有人推了提交，先 rebase 再推
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push
