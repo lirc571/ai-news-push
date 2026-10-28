@@ -1,9 +1,10 @@
 {
   "version": 1,
   "initialized": true,
-  "etag": "W/\"v1-codex-resets-recent-b613ffd630959e9c\"",
-  "updatedAt": "2026-10-28T02:55:13.021Z",
+  "etag": "W/\"v1-codex-resets-recent-c298d0b3380b94e8\"",
+  "updatedAt": "2026-10-28T06:35:14.051Z",
   "seen": {
+    "reset-2115273064481218829-1-1:confirmed": "2026-10-28T06:35:13.222Z",
     "reset-2115273064481218829-1-1:announced": "2026-10-28T02:55:12.094Z",
     "reset-2114588174249071102-1-1:announced": "2026-10-26T05:35:14.010Z",
     "reset-2114200291319124163-1-1:confirmed": "2026-10-25T06:15:11.199Z",
